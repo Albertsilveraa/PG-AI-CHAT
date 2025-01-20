@@ -42,7 +42,7 @@ def initialize_database():
         edad INTEGER
     );
     """)
-
+  
     # Verifica si la tabla está vacía
     cursor.execute("SELECT COUNT(*) FROM usuarios;")
     count = cursor.fetchone()[0]
