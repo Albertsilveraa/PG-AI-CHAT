@@ -103,21 +103,21 @@ else:
         st.session_state.messages.append({"role": "assistant", "content": answer})
 
     st.divider()
-    st.subheader("Ejecutar código Python sobre el último DataFrame (opcional)")
-    st.markdown("""
-    Si tu última consulta generó un DataFrame, puedes escribir código Python aquí para analizarlo
-    usando la variable `df`.
-    """)
+    #st.subheader("Ejecutar código Python sobre el último DataFrame (opcional)")
+    #st.markdown("""
+   # Si tu última consulta generó un DataFrame, puedes escribir código Python aquí para analizarlo
+    #usando la variable `df`.
+    #""")
 
     # Campo de texto para código Python
-    python_code = st.text_area("Código Python:")
+   # python_code = st.text_area("Código Python:")
 
-    if st.button("Ejecutar código Python"):
-        if st.session_state.last_df is None:
-            st.warning("No hay ningún DataFrame disponible todavía.")
-        else:
-            df = st.session_state.last_df
-            # Llamamos a python_shell, pasándole el DF en context_vars
-            output = python_shell(python_code, context_vars={"df": df})
-            st.markdown("**Salida de la ejecución Python:**")
-            st.write(output)
+    #if st.button("Ejecutar código Python"):
+     #   if st.session_state.last_df is None:
+      #      st.warning("No hay ningún DataFrame disponible todavía.")
+       # else:
+        #    df = st.session_state.last_df
+         #   # Llamamos a python_shell, pasándole el DF en context_vars
+          #  output = python_shell(python_code, context_vars={"df": df})
+           # st.markdown("**Salida de la ejecución Python:**")
+            #st.write(output)

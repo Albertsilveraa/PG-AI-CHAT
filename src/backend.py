@@ -1,5 +1,6 @@
 # backend.py
 import os
+import re
 import psycopg2
 import pandas as pd
 from dotenv import load_dotenv
@@ -19,14 +20,8 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 
-# ------------------------------------------------------------------------------
-# MODELO DE LENGUAJE (LLM)
-# ------------------------------------------------------------------------------
 llm = OpenAI(api_key=OPENAI_API_KEY, temperature=0)
 
-# ------------------------------------------------------------------------------
-# CREDENCIALES ACTUALIZABLES (se ajustan desde el frontend si se desea)
-# ------------------------------------------------------------------------------
 Data_base_Name = DB_NAME
 Data_base_User = DB_USER
 Data_base_Password = DB_PASSWORD
@@ -38,7 +33,6 @@ def update_credentials(api_key, db_name, db_user, db_password, db_host, db_port)
     global OPENAI_API_KEY, llm
     global Data_base_Name, Data_base_User, Data_base_Password, Data_base_Host, Data_base_Port
 
-    # Si el valor es None, conserva el anterior
     OPENAI_API_KEY = api_key or OPENAI_API_KEY
     Data_base_Name = db_name or Data_base_Name
     Data_base_User = db_user or Data_base_User
@@ -46,12 +40,8 @@ def update_credentials(api_key, db_name, db_user, db_password, db_host, db_port)
     Data_base_Host = db_host or Data_base_Host
     Data_base_Port = db_port or Data_base_Port
 
-    # Actualizar modelo LLM con la nueva API key (si procede)
     llm = OpenAI(api_key=OPENAI_API_KEY, temperature=0)
 
-# ------------------------------------------------------------------------------
-# CONEXIÓN A LA BASE DE DATOS
-# ------------------------------------------------------------------------------
 def get_connection():
     return psycopg2.connect(
         dbname=Data_base_Name,
@@ -61,9 +51,6 @@ def get_connection():
         port=Data_base_Port
     )
 
-# ------------------------------------------------------------------------------
-# INICIALIZAR DATABASE DE EJEMPLO
-# ------------------------------------------------------------------------------
 def initialize_database():
     conn = get_connection()
     cursor = conn.cursor()
@@ -75,10 +62,10 @@ def initialize_database():
         edad INTEGER
     );
     """)
-  
+
+    # Insertar datos de ejemplo si la tabla está vacía
     cursor.execute("SELECT COUNT(*) FROM usuarios;")
     count = cursor.fetchone()[0]
-
     if count == 0:
         usuarios_ejemplo = [
             ("prueba 1", "prueba1@example.com", 30),
@@ -92,9 +79,6 @@ def initialize_database():
     cursor.close()
     conn.close()
 
-# ------------------------------------------------------------------------------
-# OBTENER ESQUEMA (tablas, columnas, foreign keys)
-# ------------------------------------------------------------------------------
 def get_tables_and_schema() -> dict:
     conn = get_connection()
     cursor = conn.cursor()
@@ -112,10 +96,10 @@ def get_tables_and_schema() -> dict:
         return {}
 
     schema = {}
-    relationships = {}  # Para almacenar relaciones (FK) entre tablas
+    relationships = {}
 
     for (table_name,) in tables:
-        # Obtener columnas y tipos
+        # Columnas
         cursor.execute("""
         SELECT column_name, data_type
         FROM information_schema.columns
@@ -124,7 +108,7 @@ def get_tables_and_schema() -> dict:
         columns = cursor.fetchall()
         schema[table_name] = columns
 
-        # Obtener claves foráneas
+        # Claves foráneas
         cursor.execute("""
         SELECT
             kcu.column_name,
@@ -146,9 +130,6 @@ def get_tables_and_schema() -> dict:
 
     return {"tables": schema, "relationships": relationships}
 
-# ------------------------------------------------------------------------------
-# FUNCIONES PARA EJECUTAR QUERIES
-# ------------------------------------------------------------------------------
 def execute_sql_query(query: str):
     """
     Ejecuta cualquier consulta SQL (CREATE, INSERT, UPDATE, SELECT, etc.)
@@ -162,18 +143,18 @@ def execute_sql_query(query: str):
     results = None
 
     try:
-        query_upper = query.strip().upper()
-        # Soporte para múltiples sentencias separadas por ";"
+        # Dividir por ';' para soportar múltiples sentencias
         statements = [stmt.strip() for stmt in query.split(';') if stmt.strip()]
         for stmt in statements:
             cursor.execute(stmt)
+            # Si la sentencia inicia con SELECT, tomamos resultados
             if stmt.upper().startswith("SELECT"):
-                # Capturar datos
                 results = cursor.fetchall()
+
         conn.commit()
 
         if results is None:
-            # Si no hubo un SELECT, consideramos operación exitosa
+            # Si no hubo un SELECT, operación exitosa
             results = "Operación realizada con éxito."
     except Exception as e:
         conn.rollback()
@@ -184,9 +165,6 @@ def execute_sql_query(query: str):
 
     return results
 
-# ------------------------------------------------------------------------------
-# (NUEVO) FUNCION PARA OBTENER DATOS + NOMBRES DE COLUMNAS
-# ------------------------------------------------------------------------------
 def execute_sql_query_return_data(query: str):
     """
     Ejecuta el query y retorna (data, col_names) si es SELECT.
@@ -216,35 +194,29 @@ def execute_sql_query_return_data(query: str):
 
     return data, col_names
 
-# ------------------------------------------------------------------------------
-# PROMPT PARA GENERAR CONSULTAS SQL O PL/pgSQL
-# ------------------------------------------------------------------------------
+# Prompt ajustado para evitar "Respuesta:" o comentarios extra.
 prompt_template = """
-Eres un asistente llamado SQLBOT que convierte consultas en lenguaje natural a consultas SQL, 
+Eres un asistente llamado SQLBOT que convierte consultas en lenguaje natural a consultas SQL,
 sentencias en lenguaje procedural PL/pgSQL o llamadas a funciones almacenadas en PostgreSQL.
 La base de datos tiene las siguientes tablas y columnas:
 
 {schema}
 
 COMPORTAMIENTO:
-1. Si la pregunta del usuario NO está directamente relacionada con la información o datos de la base de datos,
-   responde de forma CERRADA indicando que eres un bot de PostgreSQL y que solo respondes a consultas relacionadas con la base de datos.
-
+1. Si la pregunta del usuario NO está relacionada con la información o datos de la base de datos,
+   responde únicamente con un texto breve: "Lo siento, solo respondo consultas de base de datos."
 2. Si la pregunta del usuario está relacionada con la base de datos, entonces:
-   - Decide si se requiere una consulta SQL estándar, una sentencia PL/pgSQL, o una llamada a función existente.
-   - No agregues explicaciones de más; solo produce la consulta SQL o la sentencia PL/pgSQL.
-
+   - Genera únicamente la consulta SQL o la sentencia PL/pgSQL correspondiente.
+   - No incluyas explicaciones, texto adicional, ni el prefijo "Respuesta:".
 3. Para describir la estructura de una tabla en PostgreSQL:
    SELECT column_name, data_type FROM information_schema.columns WHERE table_name='nombre_tabla';
-
 4. Para crear nuevas tablas o relaciones, usa CREATE TABLE o ALTER TABLE.
+5. Si es necesario, también puedes usar DO ... $$ ... $$ LANGUAGE plpgsql; para sentencias procedurales.
 
 Pregunta: {question}
+SALIDA: (SOLO el código SQL o PL/pgSQL)
 """
 
-# ------------------------------------------------------------------------------
-# OBTENER CONSULTA SQL A PARTIR DE LENGUAJE NATURAL
-# ------------------------------------------------------------------------------
 def get_sql_query_from_natural_language(question: str, schema_info: dict) -> str:
     """
     Dado un texto en lenguaje natural y la info del esquema, genera la consulta SQL (o PL/pgSQL).
@@ -258,7 +230,7 @@ def get_sql_query_from_natural_language(question: str, schema_info: dict) -> str
         for table, columns in tables.items()
     ])
 
-    # Agregar relaciones (claves foráneas)
+    # Agregar información sobre relaciones (claves foráneas)
     if relationships:
         rel_str = "\n".join([
             f"En {table}, la columna {col} referencia a {foreign_table}.{foreign_col}"
@@ -267,17 +239,20 @@ def get_sql_query_from_natural_language(question: str, schema_info: dict) -> str
         ])
         schema_str += "\nRelaciones:\n" + rel_str
 
+    # Generamos el prompt final
     prompt = PromptTemplate(
         input_variables=["schema", "question"],
         template=prompt_template
     )
     chain = LLMChain(llm=llm, prompt=prompt)
     response = chain.run(schema=schema_str, question=question)
-    return response.strip()
 
-# ------------------------------------------------------------------------------
-# CACHE DEL ESQUEMA
-# ------------------------------------------------------------------------------
+    # Posible limpieza de prefijos extra (por si el modelo insiste en ponerlos)
+    cleaned_response = re.sub(r'(?i)\brespuesta:\s*', '', response).strip()
+
+    return cleaned_response
+
+# Cache local del esquema para no leer la DB en cada request
 cached_schema = {}
 
 def get_cached_schema():
@@ -288,23 +263,16 @@ def get_cached_schema():
     cached_schema = schema_info
     return schema_info
 
-# ------------------------------------------------------------------------------
-# (NUEVO) CREAR DATAFRAME A PARTIR DE CONSULTA SQL
-# ------------------------------------------------------------------------------
 def create_df_from_sql(query: str) -> pd.DataFrame:
     """
     Ejecuta la consulta SQL y retorna un DataFrame de pandas con los resultados.
     """
     data, col_names = execute_sql_query_return_data(query)
     if data is None:
-        # Si no hay SELECT, data vendrá como None. Manejar según tu preferencia.
         raise ValueError("La consulta no devolvió resultados o no era un SELECT.")
     df = pd.DataFrame(data, columns=col_names)
     return df
 
-# ------------------------------------------------------------------------------
-# (NUEVO) EJECUTAR CÓDIGO PYTHON (ANÁLISIS, GRÁFICOS, ETC.)
-# ------------------------------------------------------------------------------
 def python_shell(code: str, context_vars: dict = None):
     """
     Ejecuta un fragmento de código Python en un entorno controlado.
