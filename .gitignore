@@ -1,1 +1,4 @@
 .env
+streamlit.py
+.streamlit
+pruebagraficos.py
