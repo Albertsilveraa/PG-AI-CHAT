@@ -1,123 +1,195 @@
 import streamlit as st
-from backend import (
-    update_credentials, initialize_database, get_tables_and_schema,
-    get_sql_query_from_natural_language, execute_sql_query,
-    create_df_from_sql, python_shell  
+import pandas as pd
+from describe import *
+#from interpretation *
+
+from backend5 import SQLBot  # Asegúrate de que backend_modular.py está en el mismo directorio
+import json
+
+# Configuración de la página
+st.set_page_config(
+    page_title="MySQL-Chat Bot",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Sidebar para ingresar credenciales
+# Estilo personalizado
+st.markdown("""
+<style>
+    .stApp {
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    .sql-code {
+        background-color: #1e1e1e;
+        color: #d4d4d4;
+        padding: 10px;
+        border-radius: 5px;
+        font-family: 'Courier New', monospace;
+    }
+    .stButton>button {
+        width: 100%;
+    }
+    .stTextInput>div>div>input {
+        /* Puedes agregar estilos personalizados aquí */
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Inicialización del bot con manejo de errores
+@st.cache_resource
+def get_bot():
+    try:
+        bot = SQLBot()
+        return bot
+    except Exception as e:
+        st.error(f"Error al inicializar el bot: {str(e)}")
+        return None
+
+# Inicializar el bot
+bot = get_bot()
+
+# Sidebar para configuración
 with st.sidebar:
-    st.header("Credenciales de conexión")
-    input_openai_api_key = st.text_input("OPENAI API KEY", type="password")
-    input_db_name = st.text_input("Data Base Name", type="password")
-    input_db_user = st.text_input("Data Base User", type="password")
-    input_db_password = st.text_input("Data Base Password", type="password")
-    input_db_host = st.text_input("Data Base Host", value="localhost")
-    input_db_port = st.text_input("Data Base Port", value="5432")
+    st.header("📊 Configuración de la Base de Datos")
+    
+    # Formulario de credenciales
+    with st.form("credentials_form"):
+        input_openai_api_key = st.text_input("OpenAI API Key", type="password")
+        input_db_name = st.text_input("Nombre de la Base de Datos")
+        input_db_user = st.text_input("Usuario")
+        input_db_password = st.text_input("Contraseña", type="password")
+        input_db_host = st.text_input("Host", value="localhost")
+        input_db_port = st.text_input("Puerto", value="3306")
+        
+        submit_button = st.form_submit_button("Actualizar Credenciales")
+        
+        if submit_button and bot:
+            try:
+                bot.update_credentials(
+                    api_key=input_openai_api_key if input_openai_api_key else None,
+                    db_name=input_db_name if input_db_name else None,
+                    db_user=input_db_user if input_db_user else None,
+                    db_password=input_db_password if input_db_password else None,
+                    db_host=input_db_host if input_db_host else None,
+                    db_port=input_db_port if input_db_port else None
+                )
+                st.success("¡Credenciales actualizadas correctamente!")
+                
+                # Mostrar el esquema de la base de datos
+                try:
+                    schema = bot.get_schema()
+                    if schema:
+                        st.success("Conexión a la base de datos establecida")
+                        with st.expander("Ver esquema de la base de datos"):
+                            st.code(schema)
+                except Exception as e:
+                    st.error(f"Error al obtener el esquema: {str(e)}")
+            except Exception as e:
+                st.error(f"Error al actualizar credenciales: {str(e)}")
 
-# Verificar si faltan datos de credenciales
-if not all([input_openai_api_key, input_db_name, input_db_user, input_db_password, input_db_host, input_db_port]):
-    st.sidebar.warning("Por favor, completa todos los campos de credenciales.", icon="⚠")
-else:
-    # Actualizar las credenciales si se proporcionan todos los datos
-    update_credentials(
-        api_key=input_openai_api_key,
-        db_name=input_db_name,
-        db_user=input_db_user,
-        db_password=input_db_password,
-        db_host=input_db_host,
-        db_port=input_db_port
-    )
+# Título principal
+st.title("🤖 MySQL-Chat Bot")
+st.markdown("### Tu asistente inteligente para consultas de base de datos")
 
-    # Inicializar base de datos y obtener esquema solo si hay credenciales válidas
-    initialize_database()
-    schema = get_tables_and_schema()
+# Inicializar estado de la sesión
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-    st.title("POSTGRES-CHAT 🤖🦜🔗")
-
-    # Verificar o establecer modelo en sesión
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    # Guardar DataFrame en sesión (si generamos uno)
-    if "last_df" not in st.session_state:
-        st.session_state.last_df = None
-
-    # Mostrar historial de conversación
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
+# Mostrar historial de mensajes
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        if isinstance(message["content"], dict):
+            # Si el contenido es un diccionario (para resultados de consultas)
+            if "sql_query" in message["content"]:
+                st.code(message["content"]["sql_query"], language="sql")
+            if "data" in message["content"] and isinstance(message["content"]["data"], pd.DataFrame) and not message["content"]["data"].empty:
+                st.dataframe(message["content"]["data"])
+            if "message" in message["content"]:
+                st.write(message["content"]["message"])
+        else:
+            # Si es un mensaje simple
             st.markdown(message["content"])
 
-    # Entrada de usuario
-    if prompt := st.chat_input("Hazme una pregunta sobre la base de datos :"):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+# Input del usuario
+if prompt := st.chat_input("Hazme una pregunta sobre la base de datos..."):
+    # Validar que el bot esté inicializado
+    if not bot:
+        st.error("El bot no está inicializado correctamente. Por favor, verifica las credenciales.")
+        st.stop()
 
-        # Generar respuesta de SQLBOT (consulta SQL o PL/pgSQL)
-        answer = get_sql_query_from_natural_language(prompt, schema)
+    # Agregar mensaje del usuario al historial
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
 
-        # Mostrar la consulta o respuesta generada
-        with st.chat_message("assistant"):
-            st.markdown(f"**SQLBOT generó:**\n```\n{answer}\n```")
+    # Procesar la consulta paso a paso
+    try:
+        with st.spinner("Interpretando tu consulta..."):
+            # Paso 1: Interpretación
+            query_structure = bot.interpret_user_query(prompt)
+            st.write("**Estructura de la consulta interpretada:**", query_structure)
 
-        # Detectar si la respuesta contiene posibles sentencias SQL
-        # (puedes ajustar la detección según tus necesidades)
-        sql_keywords = (
-            "SELECT", "INSERT", "UPDATE", "DELETE", 
-            "CREATE", "DROP", "BEGIN", "END", 
-            "DECLARE", "PROCEDURE", "FUNCTION", "CALL"
-        )
-        if any(keyword in answer.upper() for keyword in sql_keywords):
-            results = execute_sql_query(answer)  # intentalo con la lógica normal
+        with st.spinner("Generando consulta SQL..."):
+            # Paso 2: Generar SQL
+            sql_query = bot.generate_sql(query_structure)
+            st.code(sql_query, language="sql")
 
-            # Si es un SELECT y no hubo error (lista de tuplas),
-            # podemos convertirlo en DF para mostrarlo más limpio.
-            # Para eso, repetimos la consulta con create_df_from_sql.
-            if "select" in answer.lower() and isinstance(results, list):
-                # Volvemos a traer el resultado pero esta vez en forma de DataFrame
-                try:
-                    df = create_df_from_sql(answer)
-                    st.session_state.last_df = df  # guardarlo en session_state
-                    st.markdown("**Resultados en forma de DataFrame:**")
-                    st.dataframe(df)
-                except Exception as e:
-                    st.error(f"Error al crear DataFrame: {e}")
+        with st.spinner("Ejecutando consulta..."):
+            # Paso 3: Ejecutar consulta
+            response = bot.execute_query(sql_query)
 
-            else:
-                # Para otro tipo de query, results será mensaje de éxito o lista
-                st.markdown("**Resultados de la consulta:**")
-                if isinstance(results, str):
-                    st.write(results)
+            # Mostrar resultados
+            with st.chat_message("assistant"):
+                if response["success"]:
+                    response_content = {}
+                    
+                    if "sql_query" in response:
+                        response_content["sql_query"] = response["sql_query"]
+                        st.code(response["sql_query"], language="sql")
+                    
+                    if "data" in response and isinstance(response["data"], pd.DataFrame) and not response["data"].empty:
+                        response_content["data"] = response["data"]
+                        st.dataframe(response["data"])
+                    
+                    if "message" in response:
+                        response_content["message"] = response["message"]
+                        st.write(response["message"])
+                    
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": response_content
+                    })
                 else:
-                    # Mostrar fila por fila
-                    if results:
-                        for row in results:
-                            st.write(row)
-                    else:
-                        st.write("Consulta ejecutada. (Sin resultados o tabla vacía).")
-        else:
-            # Si no parece ser SQL, lo mostramos tal cual
-            st.markdown(answer)
+                    error_message = f"Error: {response['error']}"
+                    st.error(error_message)
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": error_message
+                    })
+    except Exception as e:
+        error_message = f"Error inesperado: {str(e)}"
+        st.error(error_message)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": error_message
+        })
 
-        # Guardar la respuesta en el historial
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+# Botones de acción en el sidebar
+st.sidebar.markdown("### 🛠️ Herramientas")
+if st.sidebar.button("Limpiar Historial"):
+    st.session_state.messages = []
+    st.experimental_rerun()
 
-    st.divider()
-    #st.subheader("Ejecutar código Python sobre el último DataFrame (opcional)")
-    #st.markdown("""
-   # Si tu última consulta generó un DataFrame, puedes escribir código Python aquí para analizarlo
-    #usando la variable `df`.
-    #""")
-
-    # Campo de texto para código Python
-   # python_code = st.text_area("Código Python:")
-
-    #if st.button("Ejecutar código Python"):
-     #   if st.session_state.last_df is None:
-      #      st.warning("No hay ningún DataFrame disponible todavía.")
-       # else:
-        #    df = st.session_state.last_df
-         #   # Llamamos a python_shell, pasándole el DF en context_vars
-          #  output = python_shell(python_code, context_vars={"df": df})
-           # st.markdown("**Salida de la ejecución Python:**")
-            #st.write(output)
+# Mostrar el esquema actual
+if bot:
+    try:
+        with st.sidebar.expander("Ver esquema actual"):
+            schema = bot.get_schema()
+            if schema:
+                st.code(schema)
+            else:
+                st.warning("No hay esquema disponible")
+    except Exception as e:
+        st.sidebar.error(f"Error al cargar el esquema: {str(e)}")

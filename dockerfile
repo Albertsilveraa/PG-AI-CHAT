@@ -23,10 +23,10 @@ COPY src/ ./src/
 COPY .env ./
 
 # Exponemos el puerto (si tu aplicación lo usa, por ejemplo, para un servidor web o API)
-EXPOSE 5000
+EXPOSE 8501
 
 # Definimos la variable de entorno (si es necesario)
 ENV VAR_NAME=value
 
 # El comando que se ejecutará cuando se inicie el contenedor
-CMD ["python", "src/Agentforpg.py"]
+CMD ["streamlit", "run","src/app.py"]
