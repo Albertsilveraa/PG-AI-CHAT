@@ -1,4 +1,5 @@
 .env
-streamlit.py
-.streamlit
+__pycache__
 pruebagraficos.py
+dockerfile
+docker-compose.yml
